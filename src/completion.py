@@ -1,22 +1,24 @@
-from enum import Enum
 from dataclasses import dataclass
-import openai
-from openai import AsyncOpenAI
-
-from src.moderation import moderate_message
+from enum import Enum
+from os import getenv
 from typing import Optional, List
+
+import discord
+import openai
+from openai import AsyncOpenAI, api_key
+
+from src.base import Message, Prompt, Conversation, ThreadConfig
 from src.constants import (
     BOT_INSTRUCTIONS,
     BOT_NAME,
     EXAMPLE_CONVOS,
 )
-import discord
-from src.base import Message, Prompt, Conversation, ThreadConfig
-from src.utils import split_into_shorter_messages, close_thread, logger
+from src.moderation import moderate_message
 from src.moderation import (
     send_moderation_flagged_message,
     send_moderation_blocked_message,
 )
+from src.utils import split_into_shorter_messages, close_thread, logger
 
 MY_BOT_NAME = BOT_NAME
 MY_BOT_EXAMPLE_CONVOS = EXAMPLE_CONVOS
@@ -38,11 +40,14 @@ class CompletionData:
     status_text: Optional[str]
 
 
-client = AsyncOpenAI()
+client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=getenv("OPENAI_API_KEY")
+)
 
 
 async def generate_completion_response(
-    messages: List[Message], user: str, thread_config: ThreadConfig
+        messages: List[Message], user: str, thread_config: ThreadConfig
 ) -> CompletionData:
     try:
         prompt = Prompt(
@@ -62,24 +67,6 @@ async def generate_completion_response(
             stop=["<|endoftext|>"],
         )
         reply = response.choices[0].message.content.strip()
-        if reply:
-            flagged_str, blocked_str = moderate_message(
-                message=(rendered[-1]["content"] + reply)[-500:], user=user
-            )
-            if len(blocked_str) > 0:
-                return CompletionData(
-                    status=CompletionResult.MODERATION_BLOCKED,
-                    reply_text=reply,
-                    status_text=f"from_response:{blocked_str}",
-                )
-
-            if len(flagged_str) > 0:
-                return CompletionData(
-                    status=CompletionResult.MODERATION_FLAGGED,
-                    reply_text=reply,
-                    status_text=f"from_response:{flagged_str}",
-                )
-
         return CompletionData(
             status=CompletionResult.OK, reply_text=reply, status_text=None
         )
@@ -103,7 +90,7 @@ async def generate_completion_response(
 
 
 async def process_response(
-    user: str, thread: discord.Thread, response_data: CompletionData
+        user: str, thread: discord.Thread, response_data: CompletionData
 ):
     status = response_data.status
     reply_text = response_data.reply_text

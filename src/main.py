@@ -1,10 +1,14 @@
+import asyncio
+import logging
 from collections import defaultdict
-from typing import Literal, Optional, Union
+from typing import Optional
 
 import discord
 from discord import Message as DiscordMessage, app_commands
-import logging
+
+from src import completion
 from src.base import Message, Conversation, ThreadConfig
+from src.completion import generate_completion_response, process_response
 from src.constants import (
     BOT_INVITE_URL,
     DISCORD_BOT_TOKEN,
@@ -15,20 +19,17 @@ from src.constants import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
 )
-import asyncio
+from src.moderation import (
+    moderate_message,
+    send_moderation_blocked_message,
+    send_moderation_flagged_message,
+)
 from src.utils import (
     logger,
     should_block,
     close_thread,
     is_last_message_stale,
     discord_message_to_message,
-)
-from src import completion
-from src.completion import generate_completion_response, process_response
-from src.moderation import (
-    moderate_message,
-    send_moderation_blocked_message,
-    send_moderation_flagged_message,
 )
 
 logging.basicConfig(
@@ -75,11 +76,11 @@ async def on_ready():
     max_tokens="How many tokens the model should output at max for each message."
 )
 async def chat_command(
-    int: discord.Interaction,
-    message: str,
-    model: AVAILABLE_MODELS = DEFAULT_MODEL,
-    temperature: Optional[float] = 1.0,
-    max_tokens: Optional[int] = 2048,
+        int: discord.Interaction,
+        message: str,
+        model: AVAILABLE_MODELS = DEFAULT_MODEL,
+        temperature: Optional[float] = 1.0,
+        max_tokens: Optional[int] = 512,
 ):
     try:
         # only support creating thread in text channel
@@ -111,21 +112,6 @@ async def chat_command(
 
         try:
             # moderate the message
-            flagged_str, blocked_str = moderate_message(message=message, user=user)
-            await send_moderation_blocked_message(
-                guild=int.guild,
-                user=user,
-                blocked_str=blocked_str,
-                message=message,
-            )
-            if len(blocked_str) > 0:
-                # message was blocked
-                await int.response.send_message(
-                    f"Your prompt has been blocked by moderation.\n{message}",
-                    ephemeral=True,
-                )
-                return
-
             embed = discord.Embed(
                 description=f"<@{user.id}> wants to chat! 🤖💬",
                 color=discord.Color.green(),
@@ -135,21 +121,9 @@ async def chat_command(
             embed.add_field(name="max_tokens", value=max_tokens, inline=True)
             embed.add_field(name=user.name, value=message)
 
-            if len(flagged_str) > 0:
-                # message was flagged
-                embed.color = discord.Color.yellow()
-                embed.title = "⚠️ This prompt was flagged by moderation."
-
             await int.response.send_message(embed=embed)
             response = await int.original_response()
 
-            await send_moderation_flagged_message(
-                guild=int.guild,
-                user=user,
-                flagged_str=flagged_str,
-                message=message,
-                url=response.jump_url,
-            )
         except Exception as e:
             logger.exception(e)
             await int.response.send_message(
@@ -208,9 +182,9 @@ async def on_message(message: DiscordMessage):
 
         # ignore threads that are archived locked or title is not what we want
         if (
-            thread.archived
-            or thread.locked
-            or not thread.name.startswith(ACTIVATE_THREAD_PREFX)
+                thread.archived
+                or thread.locked
+                or not thread.name.startswith(ACTIVATE_THREAD_PREFX)
         ):
             # ignore this thread
             return
@@ -220,56 +194,13 @@ async def on_message(message: DiscordMessage):
             await close_thread(thread=thread)
             return
 
-        # moderate the message
-        flagged_str, blocked_str = moderate_message(
-            message=message.content, user=message.author
-        )
-        await send_moderation_blocked_message(
-            guild=message.guild,
-            user=message.author,
-            blocked_str=blocked_str,
-            message=message.content,
-        )
-        if len(blocked_str) > 0:
-            try:
-                await message.delete()
-                await thread.send(
-                    embed=discord.Embed(
-                        description=f"❌ **{message.author}'s message has been deleted by moderation.**",
-                        color=discord.Color.red(),
-                    )
-                )
-                return
-            except Exception as e:
-                await thread.send(
-                    embed=discord.Embed(
-                        description=f"❌ **{message.author}'s message has been blocked by moderation but could not be deleted. Missing Manage Messages permission in this Channel.**",
-                        color=discord.Color.red(),
-                    )
-                )
-                return
-        await send_moderation_flagged_message(
-            guild=message.guild,
-            user=message.author,
-            flagged_str=flagged_str,
-            message=message.content,
-            url=message.jump_url,
-        )
-        if len(flagged_str) > 0:
-            await thread.send(
-                embed=discord.Embed(
-                    description=f"⚠️ **{message.author}'s message has been flagged by moderation.**",
-                    color=discord.Color.yellow(),
-                )
-            )
-
         # wait a bit in case user has more messages
         if SECONDS_DELAY_RECEIVING_MSG > 0:
             await asyncio.sleep(SECONDS_DELAY_RECEIVING_MSG)
             if is_last_message_stale(
-                interaction_message=message,
-                last_message=thread.last_message,
-                bot_id=client.user.id,
+                    interaction_message=message,
+                    last_message=thread.last_message,
+                    bot_id=client.user.id,
             ):
                 # there is another message, so ignore this one
                 return
@@ -294,9 +225,9 @@ async def on_message(message: DiscordMessage):
             )
 
         if is_last_message_stale(
-            interaction_message=message,
-            last_message=thread.last_message,
-            bot_id=client.user.id,
+                interaction_message=message,
+                last_message=thread.last_message,
+                bot_id=client.user.id,
         ):
             # there is another message and its not from us, so ignore this response
             return

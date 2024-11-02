@@ -1,13 +1,13 @@
-from dotenv import load_dotenv
 import os
+from typing import Dict, List, Literal
+
 import dacite
 import yaml
-from typing import Dict, List, Literal
+from dotenv import load_dotenv
 
 from src.base import Config
 
 load_dotenv()
-
 
 # load config.yaml
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -76,4 +76,8 @@ MAX_CHARS_PER_REPLY_MSG = (
     1500  # discord has a 2k limit, we just break message into 1.5k
 )
 
-AVAILABLE_MODELS = Literal["gpt-3.5-turbo", "gpt-4", "gpt-4-1106-preview", "gpt-4-32k"]
+AVAILABLE_MODELS = Literal["openai/chatgpt-4o-latest",
+"cognitivecomputations/dolphin-mixtral-8x22b",
+"anthropic/claude-3.5-sonnet",
+"openai/gpt-4o-mini"
+]
