@@ -19,11 +19,6 @@ from src.constants import (
     AVAILABLE_MODELS,
     DEFAULT_MODEL,
 )
-from src.moderation import (
-    moderate_message,
-    send_moderation_blocked_message,
-    send_moderation_flagged_message,
-)
 from src.utils import (
     logger,
     should_block,
